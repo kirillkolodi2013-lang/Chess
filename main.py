@@ -172,6 +172,7 @@ class ChessGame:
         self.last_tick = time.monotonic()
         self.finished = False
         self.bot_thinking = False
+        self.last_move = None
         self.timer_job = None
 
         self.show_menu()
