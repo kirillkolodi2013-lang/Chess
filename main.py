@@ -797,6 +797,211 @@ class ChessGame:
                 str(index + 1) + ". " + move
             )
 
+        
         self.white_captured_label.config(
             text="Белые съели: " +
-            (" ".join(PIECES[p] for p in s
+            (" ".join(PIECES[p] for p in self.captured_white)
+             if self.captured_white else "—")
+        )
+
+        self.black_captured_label.config(
+            text="Чёрные съели: " +
+            (" ".join(PIECES[p] for p in self.captured_black)
+             if self.captured_black else "—")
+        )
+
+        self.update_clocks()
+
+    def update_clocks(self):
+        def format_time(seconds):
+            seconds = max(0, int(seconds))
+            return "{:02d}:{:02d}".format(
+                seconds // 60,
+                seconds % 60
+            )
+
+        if self.time_limit == 0:
+            self.white_clock.config(text="Белые: ∞")
+            self.black_clock.config(text="Чёрные: ∞")
+        else:
+            self.white_clock.config(
+                text="Белые: " + format_time(
+                    self.remaining[chess.WHITE]
+                )
+            )
+            self.black_clock.config(
+                text="Чёрные: " + format_time(
+                    self.remaining[chess.BLACK]
+                )
+            )
+
+    def tick(self):
+        if self.finished:
+            return
+
+        now = time.monotonic()
+        elapsed = now - self.last_tick
+        self.last_tick = now
+
+        if self.time_limit > 0:
+            self.remaining[self.board.turn] -= elapsed
+
+            if self.remaining[self.board.turn] <= 0:
+                self.remaining[self.board.turn] = 0
+                self.update_clocks()
+                self.finish_by_time()
+                return
+
+        self.update_clocks()
+        self.timer_job = self.root.after(200, self.tick)
+
+    def finish_by_time(self):
+        self.finished = True
+
+        loser = "Белые" if self.board.turn else "Чёрные"
+        winner = "Чёрные" if self.board.turn else "Белые"
+
+        messagebox.showinfo(
+            "Время закончилось",
+            loser + " потеряли всё время.\nПобедили: " + winner
+        )
+
+        self.show_points()
+
+    def check_end(self):
+        if not self.board.is_game_over(claim_draw=True):
+            return
+
+        self.finished = True
+
+        if self.board.is_checkmate():
+            winner = "Белые" if self.board.turn == chess.BLACK else "Чёрные"
+            result = "ШАХ И МАТ!\nПобедили: " + winner
+        elif self.board.is_stalemate():
+            result = "ПАТ! Ничья."
+        elif self.board.is_insufficient_material():
+            result = "Недостаточно фигур. Ничья."
+        else:
+            result = "Партия закончилась вничью."
+
+        messagebox.showinfo("Конец партии", result)
+        self.show_points()
+
+    def show_points(self):
+        def points(symbols):
+            total = 0
+
+            for symbol in symbols:
+                piece_type = chess.PIECE_SYMBOLS.index(
+                    symbol.lower()
+                )
+                total += VALUES[piece_type]
+
+            return total
+
+        white_points = points(self.captured_white)
+        black_points = points(self.captured_black)
+
+        messagebox.showinfo(
+            "Очки за съеденные фигуры",
+            "Белые: " + str(white_points) + " очков\n"
+            "Чёрные: " + str(black_points) + " очков\n\n"
+            "Очки не изменяют результат шахматной партии."
+        )
+
+    def undo(self):
+        if self.position == 0:
+            return
+
+        steps = 1
+
+        if self.mode == "Компьютер" and len(self.history) >= 2:
+            steps = 2
+
+        self.position = max(0, self.position - steps)
+        self.restore_state()
+
+    def redo(self):
+        if self.position >= len(self.timeline) - 1:
+            return
+
+        steps = 1
+
+        if self.mode == "Компьютер":
+            if self.position + 2 < len(self.timeline):
+                steps = 2
+
+        self.position = min(
+            len(self.timeline) - 1,
+            self.position + steps
+        )
+
+        self.restore_state()
+
+        if self.mode == "Компьютер":
+            if self.board.turn != self.player_color:
+                self.root.after(200, self.bot_move)
+
+    def restore_state(self):
+        state = self.timeline[self.position]
+
+        self.board = state["board"].copy(stack=True)
+        self.history = list(state["history"])
+        self.captured_white = list(state["white"])
+        self.captured_black = list(state["black"])
+        self.remaining = dict(state["remaining"])
+        self.last_move = state["last_move"]
+
+        self.selected = None
+        self.legal_targets = []
+        self.finished = False
+        self.last_tick = time.monotonic()
+
+        self.update_screen()
+
+    def bot_move(self):
+        if self.finished or self.mode != "Компьютер":
+            return
+
+        if self.board.turn == self.player_color:
+            return
+
+        self.bot_thinking = True
+        self.status_label.config(text="Компьютер думает...")
+        self.root.update_idletasks()
+
+        move = choose_bot_move(
+            self.board,
+            self.difficulty
+        )
+
+        self.bot_thinking = False
+
+        if move and not self.finished:
+            self.make_move(move)
+
+    def ask_new_game(self):
+        if messagebox.askyesno(
+            "Новая партия",
+            "Начать новую партию?"
+        ):
+            self.game_frame.destroy()
+            self.show_menu()
+
+    def back_to_menu(self):
+        if messagebox.askyesno(
+            "Выход",
+            "Вернуться в главное меню?"
+        ):
+            if self.timer_job:
+                self.root.after_cancel(self.timer_job)
+
+            self.game_frame.destroy()
+            self.show_menu()
+
+
+if __name__ == "__main__":
+    root = tk.Tk()
+    app = ChessGame(root)
+    root.mainloop()
+    
